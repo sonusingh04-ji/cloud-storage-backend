@@ -5,6 +5,10 @@ const crypto = require("crypto");
 const VALID_RESOURCE_TYPES = ["file", "folder"];
 const VALID_ROLES = ["viewer", "editor"];
 
+
+/**
+ * Validate resource type
+ */
 const validateResourceType = (resourceType) => {
     if (!VALID_RESOURCE_TYPES.includes(resourceType)) {
         const error = new Error("Invalid resource type");
@@ -13,6 +17,10 @@ const validateResourceType = (resourceType) => {
     }
 };
 
+
+/**
+ * Validate role
+ */
 const validateRole = (role) => {
     if (!VALID_ROLES.includes(role)) {
         const error = new Error("Role must be viewer or editor");
@@ -21,6 +29,10 @@ const validateRole = (role) => {
     }
 };
 
+
+/**
+ * Get resource and verify owner
+ */
 const getResource = async (
     resourceType,
     resourceId,
@@ -51,7 +63,9 @@ const getResource = async (
         const err = new Error(
             "Resource not found or you are not the owner"
         );
+
         err.statusCode = 404;
+
         throw err;
     }
 
@@ -59,13 +73,19 @@ const getResource = async (
         const err = new Error(
             "Deleted resources cannot be shared"
         );
+
         err.statusCode = 400;
+
         throw err;
     }
 
     return resource;
 };
 
+
+/**
+ * Share with user ID
+ */
 const shareWithUser = async ({
                                  resourceType,
                                  resourceId,
@@ -73,6 +93,7 @@ const shareWithUser = async ({
                                  role,
                                  ownerId
                              }) => {
+
     validateResourceType(resourceType);
     validateRole(role);
 
@@ -86,7 +107,9 @@ const shareWithUser = async ({
         const error = new Error(
             "You cannot share a resource with yourself"
         );
+
         error.statusCode = 400;
+
         throw error;
     }
 
@@ -113,11 +136,13 @@ const shareWithUser = async ({
         const error = new Error(
             "Recipient user does not exist"
         );
+
         error.statusCode = 404;
+
         throw error;
     }
 
-    // Check whether the resource is already shared
+    // Check existing share
     const {
         data: existingShare,
         error: existingError
@@ -136,6 +161,7 @@ const shareWithUser = async ({
     let share;
 
     if (existingShare) {
+
         const {
             data,
             error
@@ -154,7 +180,9 @@ const shareWithUser = async ({
         }
 
         share = data;
+
     } else {
+
         const {
             data,
             error
@@ -179,15 +207,21 @@ const shareWithUser = async ({
 
     return {
         ...share,
+
         resource: {
             id: resource.id,
             name: resource.name,
             resourceType
         },
+
         recipient
     };
 };
 
+
+/**
+ * Share with email
+ */
 const shareWithEmail = async ({
                                   resourceType,
                                   resourceId,
@@ -195,11 +229,14 @@ const shareWithEmail = async ({
                                   role,
                                   ownerId
                               }) => {
+
     if (!email) {
         const error = new Error(
             "Recipient email is required"
         );
+
         error.statusCode = 400;
+
         throw error;
     }
 
@@ -225,6 +262,7 @@ const shareWithEmail = async ({
         );
 
         err.statusCode = 404;
+
         throw err;
     }
 
@@ -237,11 +275,16 @@ const shareWithEmail = async ({
     });
 };
 
+
+/**
+ * Get people who have access
+ */
 const getShares = async (
     resourceType,
     resourceId,
     ownerId
 ) => {
+
     await getResource(
         resourceType,
         resourceId,
@@ -280,10 +323,15 @@ const getShares = async (
     return shares || [];
 };
 
+
+/**
+ * Revoke normal user share
+ */
 const revokeShare = async (
     shareId,
     ownerId
 ) => {
+
     const {
         data: share,
         error: shareError
@@ -323,7 +371,12 @@ const revokeShare = async (
     return true;
 };
 
+
+/**
+ * Get files shared with current user
+ */
 const getSharedFilesForUser = async (userId) => {
+
     const {
         data: shares,
         error: shareError
@@ -399,6 +452,7 @@ const getSharedFilesForUser = async (userId) => {
     }
 
     return files.map(file => {
+
         const share = shares.find(
             item =>
                 item.resource_id === file.id
@@ -419,6 +473,10 @@ const getSharedFilesForUser = async (userId) => {
     });
 };
 
+
+/**
+ * Create public link
+ */
 const createPublicLink = async (
     resourceType,
     resourceId,
@@ -426,7 +484,8 @@ const createPublicLink = async (
     password,
     ownerId
 ) => {
-    await getResource(
+
+    const resource = await getResource(
         resourceType,
         resourceId,
         ownerId
@@ -465,8 +524,288 @@ const createPublicLink = async (
         throw new Error(error.message);
     }
 
+    return {
+        ...linkShare,
+        resource: {
+            id: resource.id,
+            name: resource.name,
+            resourceType
+        }
+    };
+};
+
+
+/**
+ * Get public link record by token
+ */
+const getPublicLinkByToken = async (token) => {
+
+    if (!token) {
+        const error = new Error("Public link token is required");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const {
+        data: linkShare,
+        error
+    } = await supabase
+        .from("link_shares")
+        .select(`
+            id,
+            resource_type,
+            resource_id,
+            token,
+            role,
+            password_hash,
+            expires_at,
+            created_by,
+            created_at
+        `)
+        .eq("token", token)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(error.message);
+    }
+
+    if (!linkShare) {
+        const error = new Error("Public link not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    // Check expiry
+    if (
+        linkShare.expires_at &&
+        new Date(linkShare.expires_at).getTime() <= Date.now()
+    ) {
+        const error = new Error("This public link has expired");
+        error.statusCode = 410;
+        throw error;
+    }
+
     return linkShare;
 };
+
+
+/**
+ * Resolve public link without password
+ *
+ * If password protected, the endpoint tells frontend
+ * that a password is required without exposing the hash.
+ */
+const resolvePublicLink = async (token) => {
+
+    const linkShare =
+        await getPublicLinkByToken(token);
+
+    if (linkShare.password_hash) {
+        return {
+            requiresPassword: true,
+            resourceType: linkShare.resource_type,
+            resourceId: linkShare.resource_id,
+            expiresAt: linkShare.expires_at
+        };
+    }
+
+    return getPublicResourceAccess(linkShare);
+};
+
+
+/**
+ * Verify password and access public link
+ */
+const accessPublicLink = async (
+    token,
+    password
+) => {
+
+    const linkShare =
+        await getPublicLinkByToken(token);
+
+    if (!linkShare.password_hash) {
+        return getPublicResourceAccess(linkShare);
+    }
+
+    if (!password) {
+        const error = new Error("Password is required");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const passwordValid =
+        await bcrypt.compare(
+            password,
+            linkShare.password_hash
+        );
+
+    if (!passwordValid) {
+        const error = new Error("Incorrect password");
+        error.statusCode = 401;
+        throw error;
+    }
+
+    return getPublicResourceAccess(linkShare);
+};
+
+
+/**
+ * Return actual resource for public access
+ */
+const getPublicResourceAccess = async (linkShare) => {
+
+    validateResourceType(
+        linkShare.resource_type
+    );
+
+    const table =
+        linkShare.resource_type === "file"
+            ? "files"
+            : "folders";
+
+    const {
+        data: resource,
+        error
+    } = await supabase
+        .from(table)
+        .select("*")
+        .eq("id", linkShare.resource_id)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(error.message);
+    }
+
+    if (!resource) {
+        const error = new Error("Shared resource no longer exists");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    if (resource.is_deleted) {
+        const error = new Error("This resource has been deleted");
+        error.statusCode = 410;
+        throw error;
+    }
+
+    // Public link for a file
+    if (linkShare.resource_type === "file") {
+
+        if (!resource.storage_key) {
+            const error =
+                new Error("File storage information is missing");
+
+            error.statusCode = 500;
+
+            throw error;
+        }
+
+        const {
+            data,
+            error: storageError
+        } = await supabase.storage
+            .from("files")
+            .createSignedUrl(
+                resource.storage_key,
+                60 * 60
+            );
+
+        if (storageError) {
+            throw new Error(storageError.message);
+        }
+
+        return {
+            requiresPassword: false,
+            resourceType: "file",
+            resource: {
+                id: resource.id,
+                name: resource.name,
+                mime_type: resource.mime_type,
+                size_bytes: resource.size_bytes,
+                created_at: resource.created_at
+            },
+            expiresAt: linkShare.expires_at,
+            downloadUrl: data.signedUrl
+        };
+    }
+
+    // Public folder link
+    return {
+        requiresPassword: false,
+        resourceType: "folder",
+        resource: {
+            id: resource.id,
+            name: resource.name,
+            created_at: resource.created_at
+        },
+        expiresAt: linkShare.expires_at
+    };
+};
+
+
+/**
+ * Revoke public link
+ */
+const revokePublicLink = async (
+    linkId,
+    ownerId
+) => {
+
+    if (!linkId) {
+        const error = new Error("Public link ID is required");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const {
+        data: linkShare,
+        error: linkError
+    } = await supabase
+        .from("link_shares")
+        .select(
+            "id, resource_type, resource_id, created_by"
+        )
+        .eq("id", linkId)
+        .maybeSingle();
+
+    if (linkError) {
+        throw new Error(linkError.message);
+    }
+
+    if (!linkShare) {
+        const error = new Error("Public link not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    // Only the creator/owner can revoke the link
+    if (linkShare.created_by !== ownerId) {
+        const error =
+            new Error(
+                "You do not have permission to revoke this public link"
+            );
+
+        error.statusCode = 403;
+
+        throw error;
+    }
+
+    const {
+        error
+    } = await supabase
+        .from("link_shares")
+        .delete()
+        .eq("id", linkId)
+        .eq("created_by", ownerId);
+
+    if (error) {
+        throw new Error(error.message);
+    }
+
+    return true;
+};
+
 
 module.exports = {
     shareWithUser,
@@ -474,5 +813,8 @@ module.exports = {
     getShares,
     revokeShare,
     getSharedFilesForUser,
-    createPublicLink
+    createPublicLink,
+    resolvePublicLink,
+    accessPublicLink,
+    revokePublicLink
 };

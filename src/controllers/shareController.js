@@ -1,7 +1,13 @@
-const shareService = require("../services/shareService");
+const shareService =
+    require("../services/shareService");
 
+
+/**
+ * Create normal user share
+ */
 const createShare = async (req, res) => {
     try {
+
         const {
             resourceType,
             resourceId,
@@ -29,6 +35,7 @@ const createShare = async (req, res) => {
         let share;
 
         if (email) {
+
             share =
                 await shareService.shareWithEmail({
                     resourceType,
@@ -37,7 +44,9 @@ const createShare = async (req, res) => {
                     role,
                     ownerId: req.user.id
                 });
+
         } else {
+
             share =
                 await shareService.shareWithUser({
                     resourceType,
@@ -55,7 +64,11 @@ const createShare = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Create share error:", error);
+
+        console.error(
+            "Create share error:",
+            error
+        );
 
         return res.status(
             error.statusCode || 500
@@ -68,8 +81,13 @@ const createShare = async (req, res) => {
     }
 };
 
+
+/**
+ * Get people who have access
+ */
 const getShares = async (req, res) => {
     try {
+
         const {
             resourceType,
             resourceId
@@ -88,7 +106,11 @@ const getShares = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Get shares error:", error);
+
+        console.error(
+            "Get shares error:",
+            error
+        );
 
         return res.status(
             error.statusCode || 500
@@ -101,8 +123,13 @@ const getShares = async (req, res) => {
     }
 };
 
+
+/**
+ * Revoke normal user share
+ */
 const revokeShare = async (req, res) => {
     try {
+
         await shareService.revokeShare(
             req.params.id,
             req.user.id
@@ -114,7 +141,11 @@ const revokeShare = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Revoke share error:", error);
+
+        console.error(
+            "Revoke share error:",
+            error
+        );
 
         return res.status(
             error.statusCode || 500
@@ -127,8 +158,13 @@ const revokeShare = async (req, res) => {
     }
 };
 
+
+/**
+ * Get files shared with current user
+ */
 const getSharedWithMe = async (req, res) => {
     try {
+
         const files =
             await shareService.getSharedFilesForUser(
                 req.user.id
@@ -140,12 +176,15 @@ const getSharedWithMe = async (req, res) => {
         });
 
     } catch (error) {
+
         console.error(
             "Get shared with me error:",
             error
         );
 
-        return res.status(500).json({
+        return res.status(
+            error.statusCode || 500
+        ).json({
             success: false,
             message:
                 error.message ||
@@ -154,8 +193,13 @@ const getSharedWithMe = async (req, res) => {
     }
 };
 
+
+/**
+ * Create public link
+ */
 const createPublicLink = async (req, res) => {
     try {
+
         const {
             resourceType,
             resourceId,
@@ -187,6 +231,7 @@ const createPublicLink = async (req, res) => {
         });
 
     } catch (error) {
+
         console.error(
             "Create public link error:",
             error
@@ -203,10 +248,126 @@ const createPublicLink = async (req, res) => {
     }
 };
 
+
+/**
+ * Resolve public link
+ *
+ * No login required.
+ */
+const resolvePublicLink = async (req, res) => {
+    try {
+
+        const result =
+            await shareService.resolvePublicLink(
+                req.params.token
+            );
+
+        return res.status(200).json({
+            success: true,
+            ...result
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Resolve public link error:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Failed to access public link"
+        });
+    }
+};
+
+
+/**
+ * Access password-protected public link
+ */
+const accessPublicLink = async (req, res) => {
+    try {
+
+        const {
+            password
+        } = req.body;
+
+        const result =
+            await shareService.accessPublicLink(
+                req.params.token,
+                password
+            );
+
+        return res.status(200).json({
+            success: true,
+            ...result
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Public link password error:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Failed to access public link"
+        });
+    }
+};
+
+
+/**
+ * Revoke public link
+ */
+const revokePublicLink = async (req, res) => {
+    try {
+
+        await shareService.revokePublicLink(
+            req.params.id,
+            req.user.id
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Public link revoked successfully"
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Revoke public link error:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+            success: false,
+            message:
+                error.message ||
+                "Failed to revoke public link"
+        });
+    }
+};
+
+
 module.exports = {
     createShare,
     getShares,
     revokeShare,
     getSharedWithMe,
-    createPublicLink
+    createPublicLink,
+    resolvePublicLink,
+    accessPublicLink,
+    revokePublicLink
 };
