@@ -1,45 +1,98 @@
 const { OAuth2Client } = require("google-auth-library");
+const bcrypt = require("bcryptjs");
 const supabase = require("../config/supabase");
 
-// Use your actual Google Client ID from the Google Cloud Console
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const verifyGoogleTokenAndLogin = async (idToken) => {
-    // 1. Verify token with Google
+    if (!process.env.GOOGLE_CLIENT_ID) {
+        const error = new Error("GOOGLE_CLIENT_ID is not configured");
+        error.statusCode = 500;
+        throw error;
+    }
+
+    if (!idToken) {
+        const error = new Error("Google ID token is required");
+        error.statusCode = 400;
+        throw error;
+    }
+
     const ticket = await client.verifyIdToken({
-        idToken: idToken,
+        idToken,
         audience: process.env.GOOGLE_CLIENT_ID,
     });
+
     const payload = ticket.getPayload();
+
+    if (!payload) {
+        const error = new Error("Invalid Google token");
+        error.statusCode = 401;
+        throw error;
+    }
+
+    if (!payload.email || payload.email_verified !== true) {
+        const error = new Error("Google email is not verified");
+        error.statusCode = 401;
+        throw error;
+    }
+
     const email = payload.email.trim().toLowerCase();
 
-    // 2. Check if user already exists in your database
-    const { data: existingUser, error: findError } = await supabase
+    const {
+        data: existingUser,
+        error: findError
+    } = await supabase
         .from("users")
         .select("id, name, email, password_hash, image_url, created_at")
         .eq("email", email)
         .maybeSingle();
 
-    if (findError) throw new Error(findError.message);
+    if (findError) {
+        throw new Error(findError.message);
+    }
 
-    // 3. If user exists, return them for login
-    if (existingUser) return existingUser;
+    if (existingUser) {
+        return {
+            id: existingUser.id,
+            name: existingUser.name,
+            email: existingUser.email,
+            image_url: existingUser.image_url,
+            created_at: existingUser.created_at
+        };
+    }
 
-    // 4. If user doesn't exist, create a new account automatically (SSO Registration)
-    const { data: newUser, error: insertError } = await supabase
+    // Generate a bcrypt hash so normal password login
+    // cannot accidentally treat the Google account as a valid password.
+    const googleOnlyPasswordHash = await bcrypt.hash(
+        `GOOGLE_ONLY_${cryptoRandomString()}`,
+        12
+    );
+
+    const {
+        data: newUser,
+        error: insertError
+    } = await supabase
         .from("users")
         .insert({
-            name: payload.name,
-            email: email,
-            image_url: payload.picture,
-            password_hash: "GOOGLE_SSO_NO_PASSWORD" // Placeholder for OAuth users
+            name: payload.name || email.split("@")[0],
+            email,
+            image_url: payload.picture || null,
+            password_hash: googleOnlyPasswordHash
         })
         .select("id, name, email, image_url, created_at")
         .single();
 
-    if (insertError) throw new Error(insertError.message);
+    if (insertError) {
+        throw new Error(insertError.message);
+    }
 
     return newUser;
 };
 
-module.exports = { verifyGoogleTokenAndLogin };
+const cryptoRandomString = () => {
+    return `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+};
+
+module.exports = {
+    verifyGoogleTokenAndLogin
+};

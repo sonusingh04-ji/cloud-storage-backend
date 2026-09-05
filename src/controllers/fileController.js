@@ -1,6 +1,6 @@
 const fileService = require("../services/fileService");
 const supabase = require("../config/supabase");
-
+const shareService = require("../services/shareService");
 const uploadFile = async (req, res) => {
     try {
         console.log("File received:", req.file);
@@ -384,20 +384,33 @@ const updateFileShare = async (req, res) => {
     }
 };
 
-const getSharedWithMe = async (req, res) => {
+const getSharedWithMe = async (
+    req,
+    res
+) => {
     try {
-        const { data, error } = await supabase
-            .from("files")
-            .select("*")
-            .eq("access_type", "public") // Fetch files that have been shared
-            .eq("is_deleted", false)
-            .order("updated_at", { ascending: false });
+        const files =
+            await shareService.getSharedFilesForUser(
+                req.user.id
+            );
 
-        if (error) throw error;
+        return res.status(200).json({
+            success: true,
+            files
+        });
 
-        return res.status(200).json({ success: true, files: data });
-    } catch (err) {
-        return res.status(500).json({ success: false, error: err.message });
+    } catch (error) {
+        console.error(
+            "Get shared with me error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                error.message ||
+                "Failed to get shared files"
+        });
     }
 };
 

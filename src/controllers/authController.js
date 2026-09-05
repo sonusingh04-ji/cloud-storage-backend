@@ -14,6 +14,13 @@ const register = async (req, res) => {
             });
         }
 
+        if (name.trim().length < 2) {
+            return res.status(400).json({
+                success: false,
+                message: "Name must contain at least 2 characters"
+            });
+        }
+
         if (password.length < 8) {
             return res.status(400).json({
                 success: false,
@@ -27,7 +34,7 @@ const register = async (req, res) => {
             password
         });
 
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
             message: "User registered successfully",
             user
@@ -36,7 +43,7 @@ const register = async (req, res) => {
     } catch (error) {
         console.error("Register error:", error);
 
-        res.status(error.statusCode || 500).json({
+        return res.status(error.statusCode || 500).json({
             success: false,
             message: error.message || "Registration failed"
         });
@@ -61,7 +68,7 @@ const login = async (req, res) => {
 
         const token = generateToken(user);
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             message: "Login successful",
             token,
@@ -77,7 +84,7 @@ const login = async (req, res) => {
     } catch (error) {
         console.error("Login error:", error);
 
-        res.status(error.statusCode || 500).json({
+        return res.status(error.statusCode || 500).json({
             success: false,
             message: error.message || "Login failed"
         });
@@ -86,7 +93,10 @@ const login = async (req, res) => {
 
 const getMe = async (req, res) => {
     try {
-        const { data: user, error } = await supabase
+        const {
+            data: user,
+            error
+        } = await supabase
             .from("users")
             .select("id, name, email, image_url, created_at")
             .eq("id", req.user.id)
@@ -99,13 +109,15 @@ const getMe = async (req, res) => {
             });
         }
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             user
         });
 
     } catch (error) {
-        res.status(500).json({
+        console.error("Get me error:", error);
+
+        return res.status(500).json({
             success: false,
             message: "Failed to fetch user"
         });
@@ -113,7 +125,7 @@ const getMe = async (req, res) => {
 };
 
 const logout = async (req, res) => {
-    res.status(200).json({
+    return res.status(200).json({
         success: true,
         message: "Logout successful"
     });
@@ -124,13 +136,18 @@ const googleLogin = async (req, res) => {
         const { idToken } = req.body;
 
         if (!idToken) {
-            return res.status(400).json({ success: false, message: "Google idToken is required" });
+            return res.status(400).json({
+                success: false,
+                message: "Google idToken is required"
+            });
         }
 
-        const user = await googleAuthService.verifyGoogleTokenAndLogin(idToken);
-        const token = generateToken(user); // Using your existing JWT generator
+        const user =
+            await googleAuthService.verifyGoogleTokenAndLogin(idToken);
 
-        res.status(200).json({
+        const token = generateToken(user);
+
+        return res.status(200).json({
             success: true,
             message: "Google login successful",
             token,
@@ -138,70 +155,104 @@ const googleLogin = async (req, res) => {
                 id: user.id,
                 name: user.name,
                 email: user.email,
-                image_url: user.image_url
+                image_url: user.image_url,
+                created_at: user.created_at
             }
         });
 
     } catch (error) {
         console.error("Google login error:", error);
-        res.status(401).json({ success: false, message: "Invalid Google token" });
+
+        return res.status(error.statusCode || 401).json({
+            success: false,
+            message: error.message || "Invalid Google token"
+        });
     }
 };
 
-// 🔴 NEW: Update Profile function
 const updateProfile = async (req, res) => {
     try {
         const userId = req.user.id;
         const { name, email } = req.body;
+
         let imageUrl = null;
 
-        // 1. If the user uploaded a new profile photo
         if (req.file) {
-            const sanitizedFilename = req.file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_').toLowerCase();
-            const filePath = `avatars/${userId}-${Date.now()}-${sanitizedFilename}`;
+            const sanitizedFilename =
+                req.file.originalname
+                    .replace(/[^a-zA-Z0-9_.-]/g, "_")
+                    .toLowerCase();
 
-            // Upload to Supabase 'files' bucket (or 'avatars' bucket if you created a separate one)
-            const { error: storageError } = await supabase.storage
-                .from('files')
-                .upload(filePath, req.file.buffer, {
-                    contentType: req.file.mimetype,
-                    upsert: false
-                });
+            const filePath =
+                `avatars/${userId}-${Date.now()}-${sanitizedFilename}`;
 
-            if (storageError) throw new Error(storageError.message);
+            const {
+                error: storageError
+            } = await supabase.storage
+                .from("files")
+                .upload(
+                    filePath,
+                    req.file.buffer,
+                    {
+                        contentType: req.file.mimetype,
+                        upsert: false
+                    }
+                );
 
-            // Get the public URL for the new avatar
-            const { data: publicUrlData } = supabase.storage
-                .from('files')
+            if (storageError) {
+                throw new Error(storageError.message);
+            }
+
+            const {
+                data: publicUrlData
+            } = supabase.storage
+                .from("files")
                 .getPublicUrl(filePath);
 
             imageUrl = publicUrlData.publicUrl;
         }
 
-        // 2. Prepare the data to update in the database
-        const updateData = {
-            name: name,
-            email: email, // Note: You might want to remove this line if you strictly forbid email changes, but it's safe to include if your frontend passes it.
-            // updated_at: new Date().toISOString() // Uncomment if you have an updated_at column in your users table
-        };
+        const updateData = {};
+
+        if (name !== undefined) {
+            updateData.name = name.trim();
+        }
+
+        if (email !== undefined) {
+            updateData.email = email.trim().toLowerCase();
+        }
 
         if (imageUrl) {
             updateData.image_url = imageUrl;
         }
 
-        // 3. Update the user row in Supabase
-        const { data: updatedUser, error: updateError } = await supabase
-            .from('users')
+        const {
+            data: updatedUser,
+            error: updateError
+        } = await supabase
+            .from("users")
             .update(updateData)
-            .eq('id', userId)
-            .select()
+            .eq("id", userId)
+            .select("id, name, email, image_url, created_at")
             .single();
 
-        if (updateError) throw new Error(updateError.message);
+        if (updateError) {
+            throw new Error(updateError.message);
+        }
 
-        return res.status(200).json({ success: true, user: updatedUser });
-    } catch (err) {
-        return res.status(500).json({ success: false, error: err.message });
+        return res.status(200).json({
+            success: true,
+            message: "Profile updated successfully",
+            user: updatedUser
+        });
+
+    } catch (error) {
+        console.error("Update profile error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to update profile"
+        });
     }
 };
 

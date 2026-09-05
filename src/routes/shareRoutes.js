@@ -1,14 +1,43 @@
 const express = require("express");
+
+const authMiddleware =
+    require("../middleware/authMiddleware");
+
+const shareController =
+    require("../controllers/shareController");
+
 const router = express.Router();
-const authMiddleware = require("../middleware/authMiddleware");
-const shareController = require("../controllers/shareController");
 
 router.use(authMiddleware);
 
-// POST /api/shares - Share with a specific user
-router.post("/", shareController.createShare);
+// Share with user/email
+router.post(
+    "/",
+    shareController.createShare
+);
 
-// POST /api/shares/link - Create a public link
-router.post("/link", shareController.createPublicLink);
+// Get people who have access
+router.get(
+    "/:resourceType/:resourceId",
+    shareController.getShares
+);
+
+// Revoke access
+router.delete(
+    "/:id",
+    shareController.revokeShare
+);
+
+// Shared with me
+router.get(
+    "/shared-with-me",
+    shareController.getSharedWithMe
+);
+
+// Public link
+router.post(
+    "/link",
+    shareController.createPublicLink
+);
 
 module.exports = router;
