@@ -9,7 +9,8 @@ const fileRoutes = require("./routes/fileRoutes");
 const searchRoutes = require("./routes/searchRoutes");
 const shareRoutes = require("./routes/shareRoutes");
 const starRoutes = require("./routes/starRoutes");
-
+const publicShareRoutes =
+    require("./routes/publicShareRoutes");
 const app = express();
 
 // --------------------------------------------------
@@ -87,7 +88,7 @@ app.use("/api/files", fileRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/shares", shareRoutes);
 app.use("/api/stars", starRoutes);
-
+app.use("/api/link", publicShareRoutes);
 // --------------------------------------------------
 // 404 Handler
 // --------------------------------------------------

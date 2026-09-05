@@ -1,18 +1,21 @@
 const supabase = require("../config/supabase");
 
+/**
+ * Upload file
+ */
 const uploadFile = async (userId, file, folderId = null) => {
     try {
         console.log("File received:", file);
 
-        // 🔴 Sanitize filename to remove special characters/symbols that break Supabase storage keys
+        // Sanitize filename
         const sanitizedFilename = file.originalname
-            .replace(/[^a-zA-Z0-9_.-]/g, '_')
+            .replace(/[^a-zA-Z0-9_.-]/g, "_")
             .toLowerCase();
 
-        // Create a unique clean file path
+        // Unique storage path
         const filePath = `${userId}/${Date.now()}-${sanitizedFilename}`;
 
-        // Upload actual file to Supabase Storage
+        // Upload to Supabase Storage
         const { error: storageError } = await supabase.storage
             .from("files")
             .upload(filePath, file.buffer, {
@@ -24,17 +27,17 @@ const uploadFile = async (userId, file, folderId = null) => {
             throw new Error(storageError.message);
         }
 
-        // Get public URL of uploaded file
+        // Public URL kept for existing frontend compatibility
         const { data: publicUrlData } = supabase.storage
             .from("files")
             .getPublicUrl(filePath);
 
-        // Save file information in database
+        // Save metadata
         const { data, error } = await supabase
             .from("files")
             .insert([
                 {
-                    name: file.originalname, // Keep original nice name in database table
+                    name: file.originalname,
                     storage_key: filePath,
                     file_url: publicUrlData.publicUrl,
                     mime_type: file.mimetype,
@@ -57,6 +60,10 @@ const uploadFile = async (userId, file, folderId = null) => {
     }
 };
 
+
+/**
+ * Get owner's files
+ */
 const getFiles = async (userId, limit = 50, cursor = null) => {
     try {
         let query = supabase
@@ -79,15 +86,24 @@ const getFiles = async (userId, limit = 50, cursor = null) => {
 
         const filesWithUrls = data.map(file => {
             if (!file.file_url && file.storage_key) {
-                const { data: urlData } = supabase.storage.from("files").getPublicUrl(file.storage_key);
-                return { ...file, file_url: urlData.publicUrl };
+                const { data: urlData } = supabase.storage
+                    .from("files")
+                    .getPublicUrl(file.storage_key);
+
+                return {
+                    ...file,
+                    file_url: urlData.publicUrl
+                };
             }
+
             return file;
         });
 
         let nextCursor = null;
+
         if (filesWithUrls.length === limit) {
-            nextCursor = filesWithUrls[filesWithUrls.length - 1].created_at;
+            nextCursor =
+                filesWithUrls[filesWithUrls.length - 1].created_at;
         }
 
         return {
@@ -100,6 +116,10 @@ const getFiles = async (userId, limit = 50, cursor = null) => {
     }
 };
 
+
+/**
+ * Get single file - OWNER ONLY
+ */
 const getFileById = async (fileId, userId) => {
     try {
         const { data, error } = await supabase
@@ -121,6 +141,10 @@ const getFileById = async (fileId, userId) => {
     }
 };
 
+
+/**
+ * Soft delete
+ */
 const deleteFile = async (fileId, userId) => {
     const { data: file, error } = await supabase
         .from("files")
@@ -147,6 +171,10 @@ const deleteFile = async (fileId, userId) => {
     return file;
 };
 
+
+/**
+ * Restore deleted file
+ */
 const restoreFile = async (fileId, userId) => {
     const { data: file, error } = await supabase
         .from("files")
@@ -173,6 +201,10 @@ const restoreFile = async (fileId, userId) => {
     return file;
 };
 
+
+/**
+ * Get trash
+ */
 const getTrashFiles = async (userId) => {
     const { data: files, error } = await supabase
         .from("files")
@@ -188,6 +220,10 @@ const getTrashFiles = async (userId) => {
     return files;
 };
 
+
+/**
+ * Rename file
+ */
 const renameFile = async (fileId, userId, name) => {
     const { data: file, error } = await supabase
         .from("files")
@@ -214,7 +250,12 @@ const renameFile = async (fileId, userId, name) => {
     return file;
 };
 
+
+/**
+ * Move file
+ */
 const moveFile = async (fileId, userId, folderId) => {
+
     if (folderId) {
         const { data: folder, error: folderError } = await supabase
             .from("folders")
@@ -229,8 +270,11 @@ const moveFile = async (fileId, userId, folderId) => {
         }
 
         if (!folder) {
-            const notFoundError = new Error("Destination folder not found");
+            const notFoundError =
+                new Error("Destination folder not found");
+
             notFoundError.statusCode = 404;
+
             throw notFoundError;
         }
     }
@@ -260,12 +304,22 @@ const moveFile = async (fileId, userId, folderId) => {
     return file;
 };
 
+
+/**
+ * Get signed download URL
+ *
+ * IMPORTANT:
+ * Owner can always download.
+ * Viewer/Editor can download if the file
+ * has been shared with that user.
+ */
 const getFileDownloadUrl = async (fileId, userId) => {
+
+    // First find the file
     const { data: file, error: fileError } = await supabase
         .from("files")
-        .select("id, name, storage_key, mime_type") // Updated from storage_path
+        .select("id, name, storage_key, mime_type, owner_id, is_deleted")
         .eq("id", fileId)
-        .eq("owner_id", userId)
         .eq("is_deleted", false)
         .maybeSingle();
 
@@ -279,10 +333,38 @@ const getFileDownloadUrl = async (fileId, userId) => {
         throw notFoundError;
     }
 
+    // OWNER
+    if (file.owner_id !== userId) {
+
+        // Check whether file was shared with current user
+        const { data: share, error: shareError } = await supabase
+            .from("shares")
+            .select("id, role")
+            .eq("resource_type", "file")
+            .eq("resource_id", fileId)
+            .eq("grantee_user_id", userId)
+            .maybeSingle();
+
+        if (shareError) {
+            throw new Error(shareError.message);
+        }
+
+        // Not shared
+        if (!share) {
+            const permissionError =
+                new Error("You do not have permission to download this file");
+
+            permissionError.statusCode = 403;
+
+            throw permissionError;
+        }
+    }
+
+    // Create short-lived signed URL
     const { data, error: storageError } = await supabase.storage
         .from("files")
         .createSignedUrl(
-            file.storage_key,                      // Updated from storage_path
+            file.storage_key,
             60 * 60
         );
 
@@ -296,7 +378,12 @@ const getFileDownloadUrl = async (fileId, userId) => {
     };
 };
 
+
+/**
+ * Get files inside folder
+ */
 const getFilesByFolder = async (folderId, userId) => {
+
     const { data: folder, error: folderError } = await supabase
         .from("folders")
         .select("id")
@@ -327,19 +414,32 @@ const getFilesByFolder = async (folderId, userId) => {
         throw new Error(error.message);
     }
 
-    // 🔴 Attach public URL to each file if missing
     const filesWithUrls = files.map(file => {
+
         if (!file.file_url && file.storage_key) {
-            const { data: urlData } = supabase.storage.from("files").getPublicUrl(file.storage_key);
-            return { ...file, file_url: urlData.publicUrl };
+
+            const { data: urlData } = supabase.storage
+                .from("files")
+                .getPublicUrl(file.storage_key);
+
+            return {
+                ...file,
+                file_url: urlData.publicUrl
+            };
         }
+
         return file;
     });
 
     return filesWithUrls;
 };
 
+
+/**
+ * Search files
+ */
 const searchFiles = async (query, userId) => {
+
     const { data: files, error } = await supabase
         .from("files")
         .select("*")
@@ -355,7 +455,12 @@ const searchFiles = async (query, userId) => {
     return files;
 };
 
+
+/**
+ * Permanently delete file
+ */
 const permanentlyDeleteFile = async (fileId, userId) => {
+
     const { data: file, error: fileError } = await supabase
         .from("files")
         .select("*")
@@ -369,21 +474,27 @@ const permanentlyDeleteFile = async (fileId, userId) => {
     }
 
     if (!file) {
-        const notFoundError = new Error("Deleted file not found");
+        const notFoundError =
+            new Error("Deleted file not found");
+
         notFoundError.statusCode = 404;
+
         throw notFoundError;
     }
 
-    if (file.storage_key) {                        // Updated from storage_path
+    // Remove from Supabase Storage
+    if (file.storage_key) {
+
         const { error: storageError } = await supabase.storage
             .from("files")
-            .remove([file.storage_key]);           // Updated from storage_path
+            .remove([file.storage_key]);
 
         if (storageError) {
             throw new Error(storageError.message);
         }
     }
 
+    // Delete database record
     const { error: deleteError } = await supabase
         .from("files")
         .delete()
@@ -399,6 +510,7 @@ const permanentlyDeleteFile = async (fileId, userId) => {
         name: file.name
     };
 };
+
 
 module.exports = {
     uploadFile,
